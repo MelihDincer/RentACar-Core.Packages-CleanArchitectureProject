@@ -10,7 +10,7 @@ public interface IRepository<TEntity, TEntityId>:IQuery<TEntity>
 {
     TEntity? Get(
         Expression<Func<TEntity, bool>> predicate, //lambda ile where koşulu kullanımı için diyebiliriz
-        Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, //join desteği için, IQueryable=> verileri query edebilecek. IIncludableQueryable=>
+        Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, //join desteği için, IQueryable=> verileri query edebilecek. 
         bool withDeleted = false, //false=>Silinenleri getirme.
         bool enableTracking = true //Ef tracking(izleme) desteğinin enable edilip edilmediği burada belirtildi.
         );

@@ -9,7 +9,7 @@ using System.Reflection;
 
 namespace Core.Persistence.Repositories
 {
-    public class EfRepositoryBase<TEntity,TEntityId,TContext>:IAsyncRepository<TEntity,TEntityId>
+    public class EfRepositoryBase<TEntity, TEntityId, TContext> : IAsyncRepository<TEntity, TEntityId>
         where TEntity : Entity<TEntityId>
         where TContext : DbContext
     {
@@ -19,7 +19,53 @@ namespace Core.Persistence.Repositories
         {
             Context = context;
         }
-      
+
+        public async Task<Paginate<TEntity>> GetListAsync(Expression<Func<TEntity, bool>>? predicate = null, Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy = null, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, int index = 0, int size = 10, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
+        {
+            //Sorgumuz
+            IQueryable<TEntity> queryable = Query();
+            if (!enableTracking) //enableTracking açık değilse
+                queryable = queryable.AsNoTracking(); //kapat
+            if (include != null)
+                queryable = include(queryable);
+            if (withDeleted)
+                queryable = queryable.IgnoreQueryFilters(); //Bu kontrol, withDeleted parametresi true ise soft delete filtresini geçersiz kılar ve silinmiş kayıtları da sorguya dahil eder.
+            if (predicate != null)
+                queryable = queryable.Where(predicate);
+            if (orderBy != null)
+                return await orderBy(queryable).ToPaginateAsync(index, size, cancellationToken);
+            return await queryable.ToPaginateAsync(index, size, cancellationToken);
+        }
+
+        public async Task<Paginate<TEntity>> GetListByDynamicAsync(DynamicQuery dynamic, Expression<Func<TEntity, bool>>? predicate = null, Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy = null, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, int index = 0, int size = 10, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
+        {
+            IQueryable<TEntity> queryable = Query().ToDynamic(dynamic);
+            if (!enableTracking)
+                queryable = queryable.AsNoTracking();
+            if (include != null)
+                queryable = include(queryable);
+            if (withDeleted)
+                queryable = queryable.IgnoreQueryFilters();
+            if (predicate != null)
+                queryable = queryable.Where(predicate);
+            return await queryable.ToPaginateAsync(index, size, cancellationToken);
+        }
+
+        public async Task<TEntity?> GetAsync(Expression<Func<TEntity, bool>> predicate, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
+        {
+            IQueryable<TEntity> queryable = Query();
+            if (!enableTracking)
+                queryable = queryable.AsNoTracking();
+            if (include != null)
+                queryable = include(queryable);
+            if (withDeleted)
+                queryable = queryable.IgnoreQueryFilters();
+            return await queryable.FirstOrDefaultAsync(predicate, cancellationToken);
+        }
+
+
+        public IQueryable<TEntity> Query() => Context.Set<TEntity>();
+
 
         public async Task<TEntity> AddAsync(TEntity entity)
         {
@@ -59,12 +105,38 @@ namespace Core.Persistence.Repositories
             return entity;
         }
 
-        private async Task SetEntityAsDeletedAsync(TEntity entity, bool permanent)
+        //Çoklu Silme İşlemi
+        public async Task<ICollection<TEntity>> DeleteRangeAsync(ICollection<TEntity> entities, bool permanent = false)
         {
-            if(!permanent) //kalıcı değilse(soft delete)
+            await SetEntityAsDeletedAsync(entities, permanent);
+            await Context.SaveChangesAsync();
+            return entities;
+        }
+
+        public async Task<TEntity> UpdateAsync(TEntity entity)
+        {
+            entity.UpdatedDate = DateTime.UtcNow;
+            Context.Update(entity);
+            await Context.SaveChangesAsync();
+            return entity;
+        }
+
+        public async Task<ICollection<TEntity>> UpdateRangeAsync(ICollection<TEntity> entities)
+        {
+            foreach (TEntity entity in entities)
+                entity.UpdatedDate = DateTime.UtcNow;
+            Context.UpdateRange(entities);
+            await Context.SaveChangesAsync();
+            return entities;
+        }
+
+
+        protected async Task SetEntityAsDeletedAsync(TEntity entity, bool permanent)
+        {
+            if (!permanent) //kalıcı değilse(soft delete ise)
             {
                 CheckHasEntityHaveOneToOneRelation(entity); //Bire bir ilişkisi var mı?
-                await setEntityAsSoftDeleteAsync(entity);
+                await setEntityAsSoftDeletedAsync(entity);
             }
             else
             {
@@ -72,24 +144,10 @@ namespace Core.Persistence.Repositories
             }
         }
 
-        protected void CheckHasEntityHaveOneToOneRelation(TEntity entity)
-        {
-            bool hasEntityHaveOneToOneRelation =
-                Context
-                    .Entry(entity)
-                    .Metadata.GetForeignKeys()
-                    .All(
-                        x =>
-                            x.DependentToPrincipal?.IsCollection == true
-                            || x.PrincipalToDependent?.IsCollection == true
-                            || x.DependentToPrincipal?.ForeignKey.DeclaringEntityType.ClrType == entity.GetType()
-                    ) == false;
-            if (hasEntityHaveOneToOneRelation)
-                throw new InvalidOperationException(
-                    "Entity has one-to-one relationship. Soft Delete causes problems if you try to create entry again by same foreign key."
-                );
-        }
-
+        //Örneğin; E-ticaret sitesinde bir ürünü sildiğimizde, satışlar tablosunda ona ait bütün satışların deleted hale gelmesi gerekiyor. SoftDelete güzel bir yapı,lakin ilişkisel yapılarda sorun yaşatmakta.
+        //Bu yüzden burada bütün ilişkisel noktalar bulunup, ürünü sildiğimizde (soft delete yaptığımızda) ürüne ait tüm satışların da deleted duruma çekilmesi gerekmekte.
+        //Burada hem reflection hem de entity framework'ün bize sağladığı imkanlardan yararlanılmaktadır.
+        //GetRelationLoaderQuery, burada bütün ilişkileri bulmaya yarayan bir metottur.
         private async Task setEntityAsSoftDeletedAsync(IEntityTimestamps entity)
         {
             if (entity.DeletedDate.HasValue) //Entity'nin DeletedDate değeri var ise
@@ -118,7 +176,6 @@ namespace Core.Persistence.Repositories
                         if (navValue == null)
                             continue;
                     }
-
                     foreach (IEntityTimestamps navValueItem in (IEnumerable)navValue)
                         await setEntityAsSoftDeletedAsync(navValueItem);
                 }
@@ -132,13 +189,33 @@ namespace Core.Persistence.Repositories
                         if (navValue == null)
                             continue;
                     }
-
                     await setEntityAsSoftDeletedAsync((IEntityTimestamps)navValue);
                 }
             }
-
             Context.Update(entity);
         }
+
+
+        //Bire bir ilişkisi var mı yokmu bunu tespit eden metot.
+        protected void CheckHasEntityHaveOneToOneRelation(TEntity entity)
+        {
+            //İlgili contexte, ilgili entitynin Metadatasının foreign keylerini al. 
+            bool hasEntityHaveOneToOneRelation =
+                Context
+                    .Entry(entity)
+                    .Metadata.GetForeignKeys()
+                    .All(
+                        x =>
+                            x.DependentToPrincipal?.IsCollection == true
+                            || x.PrincipalToDependent?.IsCollection == true
+                            || x.DependentToPrincipal?.ForeignKey.DeclaringEntityType.ClrType == entity.GetType()
+                    ) == false;
+            if (hasEntityHaveOneToOneRelation) //bire bir ilişkisi varsa bununla ilgili hatayı fırlat.
+                throw new InvalidOperationException(
+                    "Entity has one-to-one relationship. Soft Delete causes problems if you try to create entry again by same foreign key."
+                );
+        }
+
 
         //Bizim bütün ilişkilerimizi bulmaya yarayacak metot
         protected IQueryable<object> GetRelationLoaderQuery(IQueryable query, Type navigationPropertyType)
@@ -155,43 +232,10 @@ namespace Core.Persistence.Repositories
             return queryProviderQuery.Where(x => !((IEntityTimestamps)x).DeletedDate.HasValue);
         }
 
-
-
-
-
-        public Task<ICollection<TEntity>> DeleteRangeAsync(ICollection<TEntity> entities, bool permanent = false)
+        protected async Task SetEntityAsDeletedAsync(IEnumerable<TEntity> entities, bool permanent)
         {
-            throw new NotImplementedException();
-        }
-
-        public Task<TEntity?> GetAsync(Expression<Func<TEntity, bool>> predicate, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public Task<Paginate<TEntity>> GetListAsync(Expression<Func<TEntity, bool>>? predicate = null, Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy = null, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, int index = 0, int size = 10, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public Task<Paginate<TEntity>> GetListByDynamicAsync(DynamicQuery dynamic, Expression<Func<TEntity, bool>>? predicate = null, Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy = null, Func<IQueryable<TEntity>, IIncludableQueryable<TEntity, object>>? include = null, int index = 0, int size = 10, bool withDeleted = false, bool enableTracking = true, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public IQueryable<TEntity> Query()
-        {
-            throw new NotImplementedException();
-        }
-
-        public Task<TEntity> UpdateAsync(TEntity entity)
-        {
-            throw new NotImplementedException();
-        }
-
-        public Task<ICollection<TEntity>> UpdateRangeAsync(ICollection<TEntity> entities)
-        {
-            throw new NotImplementedException();
+            foreach (TEntity entity in entities)
+                await SetEntityAsDeletedAsync(entity, permanent);
         }
     }
 }
