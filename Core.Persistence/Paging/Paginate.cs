@@ -8,7 +8,7 @@ public class Paginate<T> //Nesneler değişebileceği için T generic yapı kurd
     }
 
     public int Size { get; set; } //Sayfadaki data sayısı
-    public int Index { get; set; } //Kaçıncı sayfa olduğumuz
+    public int Index { get; set; } //Index+1 => Kaçıncı sayfa olduğumuz, Index 0 ise 1.sayfadır.
     public int Count { get; set; } //Kaç veri olduğu
     public int Pages { get; set; } //Toplam kaç sayfamızın olduğu
     public IList<T> Items { get; set; }

@@ -6,7 +6,8 @@ public class Filter
     public string? Value { get; set; } //Field'ın değeri (null olabilir)
     public string Operator { get; set; } //Veri tipine göre, vites tipi üzerinde içinde geçene göre ya da eşittir e göre operatörlerimiz olabilir.
     public string? Logic { get; set; } //and, or logicleri olabilir
-    public IEnumerable<Filter> Filters { get; set; } //Birden fazla filtre olabilir
+
+    public IEnumerable<Filter>? Filters { get; set; } //Birden fazla filtre olabilir
 
     public Filter()
     {
