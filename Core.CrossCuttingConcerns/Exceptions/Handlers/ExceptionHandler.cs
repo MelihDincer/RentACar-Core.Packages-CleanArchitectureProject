@@ -10,9 +10,11 @@ public abstract class ExceptionHandler
         exception switch
         {
             BusinessException businessException => HandleException(businessException), //Gelen exception BusinessException türünde ise
+            ValidationException validationException => HandleException(validationException), //Gelen exception ValidationException türünde ise
             _ => HandleException(exception) //Değil ise (diğer durumlar için)
         };
 
     protected abstract Task HandleException(BusinessException businessException);
+    protected abstract Task HandleException(ValidationException businessException);
     protected abstract Task HandleException(Exception exception);
 }
