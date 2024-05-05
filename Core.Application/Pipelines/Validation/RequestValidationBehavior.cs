@@ -22,18 +22,20 @@ public class RequestValidationBehavior<TRequest, TResponse> : IPipelineBehavior<
     {
         ValidationContext<object> context = new(request);
 
+        //Burasının uzun olma sebebi birden fazla validator olabilme durumudur.
         IEnumerable<ValidationExceptionModel> errors = _validators
-            .Select(validator => validator.Validate(context)) //her bir validator için validate et
+            .Select(validator => validator.Validate(context)) //her biri için 22.satırda tanımladığımız contexti validate et.
             .SelectMany(result => result.Errors) //birden fazla validator olabilir bu yüzden result ın errorlarını döndür.
-            .Where(failure => failure != null)
-            .GroupBy(
+            .Where(failure => failure != null)  //hata varsa
+            .GroupBy( //bunları grupla
                keySelector: p => p.PropertyName,
                resultSelector: (propertyName, errors) =>
                   new ValidationExceptionModel { Property = propertyName, Errors = errors.Select(e => e.ErrorMessage) }
             ).ToList();
 
-        if (errors.Any())
-            throw new ValidationException(errors);
+
+        if (errors.Any()) //Hata varsa
+            throw new ValidationException(errors); //Hatayı fırlat
         TResponse response = await next(); //Hata yoksa command i çalıştır.
         return response;
     }
